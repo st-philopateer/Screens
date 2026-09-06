@@ -2355,7 +2355,7 @@
               ${
                 ad.src
                   ? isVideo
-                    ? `<video muted preload="metadata" src="${ad.src}" onloadedmetadata="saveVideoDuration(${ad.id}, this)"></video>`
+                    ? `<video muted preload="metadata" src="${ad.src}" onloadedmetadata="saveVideoDuration('${ad.id}', this)"></video>`
                     : `<img alt="" src="${ad.src}" onerror="this.style.display='none'">`
                   : `<span>🖼</span>`
               }
