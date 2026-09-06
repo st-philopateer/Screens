@@ -1481,15 +1481,31 @@
         startWorkerTimer(dur);
       }
 
+      function isFullscreen() {
+        return !!(
+          document.fullscreenElement ||
+          document.webkitFullscreenElement ||
+          document.mozFullScreenElement ||
+          document.msFullscreenElement
+        );
+      }
+
       function toggleFullscreen() {
-        if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen().catch(err => {
-            console.error("Error enabling fullscreen:", err);
-          });
+        if (!isFullscreen()) {
+          const el = document.documentElement;
+          const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+          if (rfs) {
+            rfs.call(el).catch(err => {
+              console.error("Error enabling fullscreen:", err);
+            });
+          }
         } else {
-          document.exitFullscreen().catch(err => {
-            console.error("Error exiting fullscreen:", err);
-          });
+          const efs = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+          if (efs) {
+            efs.call(document).catch(err => {
+              console.error("Error exiting fullscreen:", err);
+            });
+          }
         }
       }
 
@@ -1507,8 +1523,9 @@
       });
 
       // Auto-fullscreen on first user interaction (click/tap) anywhere on the page
-      document.addEventListener('click', function autoFS() {
-        if (!document.fullscreenElement) {
+      document.addEventListener('click', function autoFS(e) {
+        if (e.target.closest('#btn-fullscreen') || e.target.closest('#btn-fullscreen-mobile')) return;
+        if (!isFullscreen()) {
           toggleFullscreen();
         }
         document.removeEventListener('click', autoFS);
