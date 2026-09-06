@@ -1703,10 +1703,12 @@
         }
       }, 5000);
 
-      // Handle visibility changes (resume and sync state)
+      // Handle visibility changes (resume playing smoothly without resetting)
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
-          loadFromServer(current);
+          if (activeVideoEl && activeVideoEl.paused) {
+            activeVideoEl.play().catch(() => {});
+          }
         }
       });
 
