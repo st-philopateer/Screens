@@ -1367,9 +1367,6 @@
                   <button class="btn btn-primary" style="width: 100%; justify-content: center; padding: 12px; font-size: 15px;" onclick="toggleScreenTimer()">
                     <span id="timer-btn-text">Start Timer</span>
                   </button>
-                  <button id="btn-restart-timer" class="btn btn-ghost" style="width: 100%; justify-content: center; padding: 10px; font-size: 14px; margin-top: 8px; display: none;" onclick="restartScreenTimer()">
-                    <span>🔄 Apply Durations & Reset to 0:00</span>
-                  </button>
                 </div>
               </div>
             </div>
@@ -2222,11 +2219,9 @@
             const badge = document.getElementById('timer-status-badge');
             const maxInput = document.getElementById('input-max-mins');
             const minInput = document.getElementById('input-min-mins');
-            const btnRestart = document.getElementById('btn-restart-timer');
             
             if (data.active) {
               if (btn) btn.textContent = 'Stop Timer';
-              if (btnRestart) btnRestart.style.display = 'flex';
               if (badge) {
                 badge.style.background = "rgba(34,197,94,0.15)";
                 badge.style.color = "var(--green)";
@@ -2236,7 +2231,6 @@
               startLocalCountdown(data.active, data.maxMins, data.minMins, data.startTime, Date.now());
             } else {
               if (btn) btn.textContent = 'Start Timer';
-              if (btnRestart) btnRestart.style.display = 'none';
               if (badge) {
                 badge.style.background = "rgba(100,116,139,0.2)";
                 badge.style.color = "var(--text-sm)";
@@ -3285,26 +3279,32 @@ function toggleScreenTimer() {
   }
 }
 
-function restartScreenTimer() {
+// Auto-apply duration changes if timer is already running
+async function onTimerDurationChange() {
   const maxMins = parseFloat(document.getElementById('input-max-mins').value) || 5;
   const minMins = parseFloat(document.getElementById('input-min-mins').value) || 2;
-  if (maxMins <= 0 || minMins <= 0) {
-    toast("⚠ Please enter valid durations greater than 0");
-    return;
-  }
-  sb.from('timer_state')
-    .update({ active: true, maxMins, minMins, startTime: Date.now() })
-    .eq('id', 1)
-    .then(({ error }) => {
-      if (error) {
-        toast(`⚠ Failed to update timer: ${error.message}`);
-      } else {
-        toast("⏱ Timer updated and cycle started from 0:00");
+  if (maxMins <= 0 || minMins <= 0) return;
+
+  try {
+    const { data: cur } = await sb.from('timer_state').select('active').eq('id', 1).single();
+    if (cur && cur.active) {
+      const { error } = await sb.from('timer_state')
+        .update({ maxMins, minMins, startTime: Date.now() })
+        .eq('id', 1);
+      if (!error) {
+        toast("⏱ تم تحديث وقت الشاشات");
         syncTimerStatus();
       }
-    })
-    .catch(() => toast('⚠ Network error'));
+    }
+  } catch (e) {}
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  const maxInput = document.getElementById('input-max-mins');
+  const minInput = document.getElementById('input-min-mins');
+  if (maxInput) maxInput.addEventListener('change', onTimerDurationChange);
+  if (minInput) minInput.addEventListener('change', onTimerDurationChange);
+});
 
 // Keep placeholders for legacy functions (no-op) to avoid reference errors
 function startScreenTimer() { /* deprecated */ }

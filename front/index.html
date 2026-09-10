@@ -1638,52 +1638,6 @@
         }
       }
 
-      // Window Title Bridge for Zero-Internet Minimize/Maximize Companion
-      let currentTimerState = null;
-
-      function updateWindowTitle() {
-        const BASE_TITLE = "خدمة الشاشات (Display-Screen)";
-        if (!currentTimerState || !currentTimerState.active || !currentTimerState.startTime) {
-          const inactiveTitle = `${BASE_TITLE} [INACTIVE]`;
-          if (document.title !== inactiveTitle) document.title = inactiveTitle;
-          return;
-        }
-
-        const maxMs = (parseFloat(currentTimerState.maxMins) || 5) * 60 * 1000;
-        const minMs = (parseFloat(currentTimerState.minMins) || 2) * 60 * 1000;
-        const totalCycleMs = maxMs + minMs;
-        if (totalCycleMs <= 0) return;
-
-        const elapsed = (Date.now() - Number(currentTimerState.startTime)) % totalCycleMs;
-        const state = elapsed < maxMs ? "[MAXIMIZE]" : "[MINIMIZE]";
-        const newTitle = `${BASE_TITLE} ${state}`;
-        if (document.title !== newTitle) {
-          document.title = newTitle;
-        }
-      }
-
-      async function syncWindowTimerState() {
-        try {
-          const { data, error } = await sb.from('timer_state').select('*').eq('id', 1).single();
-          if (!error && data) {
-            currentTimerState = data;
-            try {
-              localStorage.setItem('lumina_timer_state', JSON.stringify(data));
-            } catch(e) {}
-            updateWindowTitle();
-          }
-        } catch (e) {
-          console.error("Failed to sync window timer state:", e);
-          try {
-            const saved = localStorage.getItem('lumina_timer_state');
-            if (saved) {
-              currentTimerState = JSON.parse(saved);
-              updateWindowTitle();
-            }
-          } catch(err) {}
-        }
-      }
-
       // Supabase Realtime listener
 
       function connectWebSocket() {
@@ -1712,13 +1666,6 @@
             }
           });
         nowPlayingChannel.subscribe();
-
-        sb.channel('timer-realtime')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'timer_state' }, (payload) => {
-            console.log('Timer state changed:', payload);
-            syncWindowTimerState();
-          })
-          .subscribe();
 
         sb.channel('screen-control')
           .on('broadcast', { event: 'force-play' }, (payload) => {
@@ -1788,8 +1735,6 @@
       window.addEventListener("DOMContentLoaded", () => {
         loadFromServer();
         connectWebSocket();
-        syncWindowTimerState();
-        setInterval(updateWindowTitle, 1000);
 
         // Body click interaction helper to satisfy browser autoplay restrictions
         document.body.addEventListener("click", () => {
