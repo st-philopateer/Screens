@@ -46,85 +46,64 @@ if ($null -eq ("WindowHelper" -as [type])) {
             }), IntPtr.Zero);
             return result.ToArray();
         }
+
+        public static string GetWindowTitle(IntPtr hwnd) {
+            int length = GetWindowTextLength(hwnd);
+            if (length > 0) {
+                StringBuilder sb = new StringBuilder(length + 1);
+                GetWindowText(hwnd, sb, sb.Capacity);
+                return sb.ToString();
+            }
+            return string.Empty;
+        }
     }
 "@
 }
 
-# 2. Supabase configuration
-$supabaseUrl = "https://zabocfwhfqntmumiahlt.supabase.co"
-$supabaseKey = "sb_publishable_aD0xKcUmcwKfaSS1_Vnmfg_W3ExePcE"
-$apiUrl = "$supabaseUrl/rest/v1/timer_state?id=eq.1&select=*"
-$headers = @{
-    "apikey" = $supabaseKey
-    "Authorization" = "Bearer $supabaseKey"
-}
 $lastState = ""
 
 Clear-Host
 Write-Host "======================================================" -ForegroundColor Cyan
-Write-Host "     St-Philopateer Screens Companion Script" -ForegroundColor Green
+Write-Host "     St-Philopateer Screens Companion (Zero-Data)" -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Cyan
-Write-Host "Data Source: Supabase" -ForegroundColor DarkGray
-Write-Host "Monitoring state change... Press Ctrl+C to exit." -ForegroundColor White
+Write-Host "Mode: 100% Local Window Monitor (0 KB Internet Usage)" -ForegroundColor DarkGray
+Write-Host "Monitoring window title state in local memory..." -ForegroundColor White
 Write-Host "======================================================" -ForegroundColor Cyan
 
 while ($true) {
     try {
-        $response = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers -TimeoutSec 5
-        $timerData = $response[0]
+        # Find all windows containing "Display-Screen" locally in RAM
+        $hwnds = [WindowHelper]::FindWindowsByTitle("Display-Screen")
 
-        if ($timerData.active -and $timerData.startTime) {
-            # Calculate current state from timer data
-            $maxMs = [long]$timerData.maxMins * 60 * 1000
-            $minMs = [long]$timerData.minMins * 60 * 1000
-            $totalCycleMs = $maxMs + $minMs
-            $nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-            $elapsed = ($nowMs - [long]$timerData.startTime) % $totalCycleMs
-            
-            if ($elapsed -lt $maxMs) {
-                $currentState = "maximize"
-            } else {
-                $currentState = "minimize"
-            }
-
-            if ($currentState -ne $lastState) {
-                $lastState = $currentState
+        if ($hwnds -and $hwnds.Count -gt 0) {
+            foreach ($hwnd in $hwnds) {
+                $title = [WindowHelper]::GetWindowTitle($hwnd)
                 
-                # Find all windows containing "Display-Screen"
-                $hwnds = [WindowHelper]::FindWindowsByTitle("Display-Screen")
-                
-                if ($hwnds -and $hwnds.Count -gt 0) {
-                    foreach ($hwnd in $hwnds) {
-                        if ($currentState -eq "minimize") {
-                            Write-Host "$(Get-Date -Format 'HH:mm:ss') | State: MINIMIZE -> Minimizing browser window ($hwnd)..." -ForegroundColor Yellow
-                            [void][WindowHelper]::ShowWindowAsync($hwnd, 6)
-                        } else {
-                            Write-Host "$(Get-Date -Format 'HH:mm:ss') | State: MAXIMIZE -> Restoring and Maximizing ($hwnd)..." -ForegroundColor Green
-                            [void][WindowHelper]::ShowWindowAsync($hwnd, 3)
-                            [void][WindowHelper]::SetForegroundWindow($hwnd)
-                        }
+                if ($title -match "\[MINIMIZE\]") {
+                    if ($lastState -ne "minimize") {
+                        $lastState = "minimize"
+                        Write-Host "$(Get-Date -Format 'HH:mm:ss') | State: MINIMIZE -> Minimizing browser window..." -ForegroundColor Yellow
+                        [void][WindowHelper]::ShowWindowAsync($hwnd, 6) # SW_MINIMIZE
                     }
-                } else {
-                    Write-Host "$(Get-Date -Format 'HH:mm:ss') | Warning: Window with title '*Display-Screen*' not found." -ForegroundColor DarkYellow
-                }
-            }
-        } else {
-            # Timer is inactive, ensure window is restored/maximized
-            if ($lastState -ne "inactive") {
-                $lastState = "inactive"
-                Write-Host "$(Get-Date -Format 'HH:mm:ss') | Timer is INACTIVE. Restoring window..." -ForegroundColor Gray
-                
-                $hwnds = [WindowHelper]::FindWindowsByTitle("Display-Screen")
-                if ($hwnds -and $hwnds.Count -gt 0) {
-                    foreach ($hwnd in $hwnds) {
-                        [void][WindowHelper]::ShowWindowAsync($hwnd, 3)
+                } elseif ($title -match "\[MAXIMIZE\]") {
+                    if ($lastState -ne "maximize") {
+                        $lastState = "maximize"
+                        Write-Host "$(Get-Date -Format 'HH:mm:ss') | State: MAXIMIZE -> Maximizing browser window..." -ForegroundColor Green
+                        [void][WindowHelper]::ShowWindowAsync($hwnd, 3) # SW_MAXIMIZE
+                        [void][WindowHelper]::SetForegroundWindow($hwnd)
+                    }
+                } elseif ($title -match "\[INACTIVE\]") {
+                    if ($lastState -ne "inactive") {
+                        $lastState = "inactive"
+                        Write-Host "$(Get-Date -Format 'HH:mm:ss') | State: INACTIVE -> Window normal/maximized..." -ForegroundColor Gray
+                        [void][WindowHelper]::ShowWindowAsync($hwnd, 3) # SW_MAXIMIZE
                         [void][WindowHelper]::SetForegroundWindow($hwnd)
                     }
                 }
             }
         }
     } catch {
-        Write-Host "$(Get-Date -Format 'HH:mm:ss') | Error connecting to Supabase: $_" -ForegroundColor Red
+        # Silently catch any local enumeration exceptions
     }
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 1
 }
