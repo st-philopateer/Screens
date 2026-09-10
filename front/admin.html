@@ -2165,8 +2165,10 @@
         await syncTimerStatus();
       }
 
+      let serverTimeOffset = 0; // Calibration offset between phone clock and cloud server
       let timerCountdownInterval = null;
-      function startLocalCountdown(active, maxMins, minMins, startTime, serverTime) {
+
+      function startLocalCountdown(active, maxMins, minMins, startTime) {
         if (timerCountdownInterval) clearInterval(timerCountdownInterval);
         if (!active || !startTime) return;
 
@@ -2175,15 +2177,11 @@
         const cycleMs = maxMs + minMs;
         const badge = document.getElementById('timer-status-badge');
 
-        const clientSyncTime = Date.now();
-        const refServerTime = serverTime || Date.now();
-        const serverElapsed = refServerTime - startTime;
-
         const updateUI = () => {
-          const now = Date.now();
-          const elapsedSinceSync = now - clientSyncTime;
-          let elapsed = (serverElapsed + elapsedSinceSync) % cycleMs;
-          if (elapsed < 0) elapsed = 0;
+          const now = Date.now() + serverTimeOffset;
+          let diff = now - Number(startTime);
+          if (diff < 0) diff = 0;
+          const elapsed = diff % cycleMs;
           
           let stateName = "";
           let msLeft = 0;
@@ -2212,8 +2210,21 @@
 
       async function syncTimerStatus() {
         try {
-          const { data, error } = await sb.from('timer_state').select('*').eq('id', 1).single();
-          if (error) throw error;
+          const t0 = Date.now();
+          const resp = await fetch(`${SUPABASE_URL}/rest/v1/timer_state?id=eq.1&select=*`, {
+            headers: {
+              'apikey': SUPABASE_KEY,
+              'Authorization': `Bearer ${SUPABASE_KEY}`
+            }
+          });
+          const serverDateStr = resp.headers.get('date');
+          if (serverDateStr) {
+            const serverMs = new Date(serverDateStr).getTime();
+            const latency = (Date.now() - t0) / 2;
+            serverTimeOffset = (serverMs + latency) - Date.now();
+          }
+          const items = await resp.json();
+          const data = Array.isArray(items) ? items[0] : items;
           if (data) {
             const btn = document.getElementById('timer-btn-text');
             const badge = document.getElementById('timer-status-badge');
@@ -2228,7 +2239,7 @@
               }
               if (maxInput && document.activeElement !== maxInput) maxInput.value = data.maxMins;
               if (minInput && document.activeElement !== minInput) minInput.value = data.minMins;
-              startLocalCountdown(data.active, data.maxMins, data.minMins, data.startTime, Date.now());
+              startLocalCountdown(data.active, data.maxMins, data.minMins, data.startTime);
             } else {
               if (btn) btn.textContent = 'Start Timer';
               if (badge) {
@@ -3243,8 +3254,9 @@ function toggleScreenTimer() {
       toast("⚠ Please enter valid durations greater than 0");
       return;
     }
+    const accurateStartTime = Date.now() + serverTimeOffset;
     sb.from('timer_state')
-      .update({ active: true, maxMins, minMins, startTime: Date.now() })
+      .update({ active: true, maxMins, minMins, startTime: accurateStartTime })
       .eq('id', 1)
       .then(({ error }) => {
         if (error) {
@@ -3288,8 +3300,9 @@ async function onTimerDurationChange() {
   try {
     const { data: cur } = await sb.from('timer_state').select('active').eq('id', 1).single();
     if (cur && cur.active) {
+      const accurateStartTime = Date.now() + serverTimeOffset;
       const { error } = await sb.from('timer_state')
-        .update({ maxMins, minMins, startTime: Date.now() })
+        .update({ maxMins, minMins, startTime: accurateStartTime })
         .eq('id', 1);
       if (!error) {
         toast("⏱ تم تحديث وقت الشاشات");

@@ -83,41 +83,50 @@ $headers = @{
 $lastState = ""
 $lastCloudSync = 0
 $cachedTimerData = $null
+$serverClockOffset = 0 # Milliseconds to adjust local PC clock to cloud server time
 $SYNC_INTERVAL_SEC = 3 # Responsive cloud sync every 3s
 
 Clear-Host
 Write-Host "======================================================" -ForegroundColor Cyan
 Write-Host "     St-Philopateer Screens Companion Script" -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Cyan
-Write-Host "Sync: Cloud sync every 3s (sub-second local cycle flip)" -ForegroundColor DarkGray
+Write-Host "Sync: Cloud-calibrated sync every 3s (zero clock drift)" -ForegroundColor DarkGray
 Write-Host "Monitoring state change... Press Ctrl+C to exit." -ForegroundColor White
 Write-Host "======================================================" -ForegroundColor Cyan
 
 while ($true) {
-    $nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $localNowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
-    # 1. Sync from cloud every $SYNC_INTERVAL_SEC seconds
-    if (($nowMs - $lastCloudSync) -ge ($SYNC_INTERVAL_SEC * 1000) -or $null -eq $cachedTimerData) {
+    # 1. Sync from cloud every $SYNC_INTERVAL_SEC seconds & calibrate clock
+    if (($localNowMs - $lastCloudSync) -ge ($SYNC_INTERVAL_SEC * 1000) -or $null -eq $cachedTimerData) {
         try {
-            $response = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers -TimeoutSec 4
-            $items = @($response)
+            $t0 = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            $resp = Invoke-WebRequest -Uri $apiUrl -Method Get -Headers $headers -UseBasicParsing -TimeoutSec 4
+            $serverDateStr = $resp.Headers["Date"]
+            if ($serverDateStr) {
+                $serverMs = [DateTimeOffset]::Parse($serverDateStr).ToUnixTimeMilliseconds()
+                $latency = ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - $t0) / 2
+                $serverClockOffset = ($serverMs + $latency) - [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            }
+            $items = @($resp.Content | ConvertFrom-Json)
             if ($items.Count -gt 0 -and $null -ne $items[0]) {
                 $cachedTimerData = $items[0]
-                $lastCloudSync = $nowMs
+                $lastCloudSync = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
             }
         } catch {
             Write-Host "$(Get-Date -Format 'HH:mm:ss') | Offline / Cloud unreachable, maintaining local cycle..." -ForegroundColor DarkGray
         }
     }
 
-    # 2. Local cycle execution (runs every second in RAM)
+    # 2. Local cycle execution calibrated with Cloud Time
     if ($cachedTimerData -and $cachedTimerData.active -and $cachedTimerData.startTime) {
         $maxMs = [long]($cachedTimerData.maxMins * 60 * 1000)
         $minMs = [long]($cachedTimerData.minMins * 60 * 1000)
         $totalCycleMs = $maxMs + $minMs
 
         if ($totalCycleMs -gt 0) {
-            $diff = $nowMs - [long]$cachedTimerData.startTime
+            $effectiveNowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + $serverClockOffset
+            $diff = $effectiveNowMs - [long]$cachedTimerData.startTime
             if ($diff -lt 0) { $diff = 0 }
             $elapsed = $diff % $totalCycleMs
             $currentState = if ($elapsed -lt $maxMs) { "maximize" } else { "minimize" }
