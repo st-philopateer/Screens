@@ -2221,7 +2221,7 @@
           if (serverDateStr) {
             const serverMs = new Date(serverDateStr).getTime();
             const latency = (Date.now() - t0) / 2;
-            serverTimeOffset = (serverMs + latency) - Date.now();
+            serverTimeOffset = Math.round((serverMs + latency) - Date.now());
           }
           const items = await resp.json();
           const data = Array.isArray(items) ? items[0] : items;
@@ -3248,13 +3248,13 @@ function toggleScreenTimer() {
   const btn = document.getElementById('timer-btn-text');
   const badge = document.getElementById('timer-status-badge');
   if (btn.textContent.trim() === 'Start Timer') {
-    const maxMins = parseFloat(document.getElementById('input-max-mins').value) || 5;
-    const minMins = parseFloat(document.getElementById('input-min-mins').value) || 2;
+    const maxMins = parseInt(document.getElementById('input-max-mins').value, 10) || 5;
+    const minMins = parseInt(document.getElementById('input-min-mins').value, 10) || 2;
     if (maxMins <= 0 || minMins <= 0) {
       toast("⚠ Please enter valid durations greater than 0");
       return;
     }
-    const accurateStartTime = Date.now() + serverTimeOffset;
+    const accurateStartTime = Math.round(Date.now() + (serverTimeOffset || 0));
     sb.from('timer_state')
       .update({ active: true, maxMins, minMins, startTime: accurateStartTime })
       .eq('id', 1)
@@ -3293,14 +3293,14 @@ function toggleScreenTimer() {
 
 // Auto-apply duration changes if timer is already running
 async function onTimerDurationChange() {
-  const maxMins = parseFloat(document.getElementById('input-max-mins').value) || 5;
-  const minMins = parseFloat(document.getElementById('input-min-mins').value) || 2;
+  const maxMins = parseInt(document.getElementById('input-max-mins').value, 10) || 5;
+  const minMins = parseInt(document.getElementById('input-min-mins').value, 10) || 2;
   if (maxMins <= 0 || minMins <= 0) return;
 
   try {
     const { data: cur } = await sb.from('timer_state').select('active').eq('id', 1).single();
     if (cur && cur.active) {
-      const accurateStartTime = Date.now() + serverTimeOffset;
+      const accurateStartTime = Math.round(Date.now() + (serverTimeOffset || 0));
       const { error } = await sb.from('timer_state')
         .update({ maxMins, minMins, startTime: accurateStartTime })
         .eq('id', 1);

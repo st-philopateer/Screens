@@ -106,7 +106,7 @@ while ($true) {
             if ($serverDateStr) {
                 $serverMs = [DateTimeOffset]::Parse($serverDateStr).ToUnixTimeMilliseconds()
                 $latency = ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - $t0) / 2
-                $serverClockOffset = ($serverMs + $latency) - [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+                $serverClockOffset = [long](($serverMs + $latency) - [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
             }
             $items = @($resp.Content | ConvertFrom-Json)
             if ($items.Count -gt 0 -and $null -ne $items[0]) {
