@@ -72,25 +72,26 @@ $headers = @{
 $lastState = ""
 $lastCloudSync = 0
 $cachedTimerData = $null
-$SYNC_INTERVAL_SEC = 20 # Low-bandwidth cloud sync every 20s (~3 MB/day total)
+$SYNC_INTERVAL_SEC = 5 # Low-bandwidth cloud sync every 5s
 
 Clear-Host
 Write-Host "======================================================" -ForegroundColor Cyan
 Write-Host "     St-Philopateer Screens Companion (Smart-Data)" -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Cyan
-Write-Host "Sync: Low-bandwidth smart sync (sub-second local flip)" -ForegroundColor DarkGray
+Write-Host "Sync: Cloud sync every 5s (sub-second local flip)" -ForegroundColor DarkGray
 Write-Host "Monitoring state change... Press Ctrl+C to exit." -ForegroundColor White
 Write-Host "======================================================" -ForegroundColor Cyan
 
 while ($true) {
     $nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
-    # 1. Sync from cloud only once every $SYNC_INTERVAL_SEC seconds (saves 95% of data)
+    # 1. Sync from cloud every $SYNC_INTERVAL_SEC seconds (saves 90% of data)
     if (($nowMs - $lastCloudSync) -ge ($SYNC_INTERVAL_SEC * 1000) -or $null -eq $cachedTimerData) {
         try {
             $response = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers -TimeoutSec 4
-            if ($response -and $response.Count -gt 0) {
-                $cachedTimerData = $response[0]
+            $items = @($response)
+            if ($items.Count -gt 0 -and $null -ne $items[0]) {
+                $cachedTimerData = $items[0]
                 $lastCloudSync = $nowMs
             }
         } catch {
@@ -101,12 +102,14 @@ while ($true) {
 
     # 2. Local cycle execution (runs every second in RAM - 0 bytes network)
     if ($cachedTimerData -and $cachedTimerData.active -and $cachedTimerData.startTime) {
-        $maxMs = [long]$cachedTimerData.maxMins * 60 * 1000
-        $minMs = [long]$cachedTimerData.minMins * 60 * 1000
+        $maxMs = [long]($cachedTimerData.maxMins * 60 * 1000)
+        $minMs = [long]($cachedTimerData.minMins * 60 * 1000)
         $totalCycleMs = $maxMs + $minMs
 
         if ($totalCycleMs -gt 0) {
-            $elapsed = ($nowMs - [long]$cachedTimerData.startTime) % $totalCycleMs
+            $diff = $nowMs - [long]$cachedTimerData.startTime
+            if ($diff -lt 0) { $diff = 0 }
+            $elapsed = $diff % $totalCycleMs
             $currentState = if ($elapsed -lt $maxMs) { "maximize" } else { "minimize" }
 
             if ($currentState -ne $lastState) {
