@@ -126,6 +126,7 @@
         position: absolute;
         inset: 0;
         overflow: hidden;
+        background: #000;
       }
       .slide-bg img.bg-image,
       .slide-bg video.bg-video {
@@ -136,8 +137,7 @@
         z-index: 2;
         display: block;
       }
-      .slide-bg img.bg-image-blur,
-      .slide-bg video.bg-video-blur {
+      .slide-bg img.bg-image-blur {
         position: absolute;
         inset: 0;
         width: 100%;
@@ -1137,6 +1137,7 @@
         interval = null,
         elapsed = 0;
       let activeVideoEl = null;
+      let videoWatchdogTimeout = null;
       let timerWorker = null; // Background Web Worker timer
 
       function isExpired(ad) {
@@ -1187,13 +1188,12 @@
           let bgContent;
           if (hasSrc && isVideo) {
             bgContent = `
-              <video class="bg-video-blur" autoplay muted playsinline loop preload="auto"></video>
-              <video class="bg-video" autoplay muted playsinline preload="auto"></video>
+              <video class="bg-video" muted playsinline preload="metadata"></video>
             `;
           } else if (hasSrc) {
             bgContent = `
               <img class="bg-image-blur" src="${mediaUrl}" alt="">
-              <img class="bg-image" src="${mediaUrl}" alt="${ad.title || ""}" loading="lazy">
+              <img class="bg-image" src="${mediaUrl}" alt="${ad.title || ""}" decoding="async">
             `;
           } else {
             bgContent = `
@@ -1225,10 +1225,20 @@
           stage.appendChild(div);
 
           if (hasSrc && isVideo) {
-            const vBlur = div.querySelector("video.bg-video-blur");
             const v = div.querySelector("video.bg-video");
-            if (vBlur) vBlur.src = mediaUrl;
             if (v) v.src = mediaUrl;
+          } else if (hasSrc) {
+            const imgEl = div.querySelector("img.bg-image");
+            const imgBlurEl = div.querySelector("img.bg-image-blur");
+            const fallbackSrc = ad.src || "";
+            const onImgErr = function() {
+              if (fallbackSrc && this.src !== fallbackSrc) {
+                console.warn("Cached image failed, falling back to direct URL:", fallbackSrc);
+                this.src = fallbackSrc;
+              }
+            };
+            if (imgEl) imgEl.onerror = onImgErr;
+            if (imgBlurEl) imgBlurEl.onerror = onImgErr;
           }
         });
       }
@@ -1342,10 +1352,18 @@
         const prev = current;
         current = (idx + list.length) % list.length;
 
-        if (activeVideoEl) {
-          activeVideoEl.pause();
-          activeVideoEl = null;
+        if (videoWatchdogTimeout) {
+          clearTimeout(videoWatchdogTimeout);
+          videoWatchdogTimeout = null;
         }
+
+        // Pause ALL videos in stage so no hidden video consumes CPU/GPU
+        document.querySelectorAll("#stage video").forEach((vid) => {
+          try {
+            vid.pause();
+          } catch (e) {}
+        });
+        activeVideoEl = null;
 
         document.querySelectorAll(".slide").forEach((s, i) => {
           s.className =
@@ -1438,40 +1456,62 @@
         if (ad.type === "video" && (ad.src || ad.fileBlob)) {
           const slideEl = document.getElementById(`slide-${current}`);
           const v = slideEl ? slideEl.querySelector("video.bg-video") : null;
-          const vBlur = slideEl ? slideEl.querySelector("video.bg-video-blur") : null;
           if (v) {
             activeVideoEl = v;
             
-            // Explicitly force source loading before playback
-            v.load();
             v.currentTime = 0;
             v.muted = ad.muted !== false;
             
-            v.play().catch((err) => {
-              console.log("Autoplay audio blocked or video playback failed:", err);
-              v.muted = true;
-              v.play().catch(() => {});
-            });
-            
-            if (vBlur) {
-              vBlur.load();
-              vBlur.currentTime = 0;
-              vBlur.play().catch(() => {});
+            const playPromise = v.play();
+            if (playPromise !== undefined) {
+              playPromise.catch((err) => {
+                console.warn("Autoplay audio blocked or video playback failed:", err);
+                v.muted = true;
+                v.play().catch(() => {});
+              });
             }
             
-            v.onended = () => goTo(current + 1);
-            
-            // Sync background timer with video duration
-            v.onloadedmetadata = () => {
-              startWorkerTimer(v.duration || ad.duration || 10);
+            v.onended = () => {
+              if (videoWatchdogTimeout) {
+                clearTimeout(videoWatchdogTimeout);
+                videoWatchdogTimeout = null;
+              }
+              goTo(current + 1);
             };
-            if (v.readyState >= 1) {
-              startWorkerTimer(v.duration || ad.duration || 10);
-            }
+
+            v.onerror = () => {
+              console.error("Video error on slide " + current, v.error);
+              if (ad.src && v.src !== ad.src) {
+                console.log("Retrying video with direct server URL:", ad.src);
+                v.src = ad.src;
+                v.currentTime = 0;
+                v.play().catch(() => goTo(current + 1));
+              } else {
+                setTimeout(() => goTo(current + 1), 2000);
+              }
+            };
             
             v.ontimeupdate = () => {
-              if (v.duration && bar)
+              if (v.duration && v.duration > 0 && bar) {
                 bar.style.width = (v.currentTime / v.duration) * 100 + "%";
+              }
+            };
+
+            // Watchdog fallback in case video freezes or gets stuck
+            const fallbackDur = (ad.duration && ad.duration > 0 ? ad.duration : 15) + 5;
+            videoWatchdogTimeout = setTimeout(() => {
+              console.warn("Video watchdog triggered, advancing slide...");
+              goTo(current + 1);
+            }, fallbackDur * 1000);
+
+            v.onloadedmetadata = () => {
+              if (v.duration && v.duration > 0) {
+                if (videoWatchdogTimeout) clearTimeout(videoWatchdogTimeout);
+                videoWatchdogTimeout = setTimeout(() => {
+                  console.warn("Video duration watchdog triggered, advancing slide...");
+                  goTo(current + 1);
+                }, (v.duration + 5) * 1000);
+              }
             };
           }
           return;
@@ -1572,10 +1612,16 @@
 
         const list = getActiveAds();
         clearInterval(interval);
-        if (activeVideoEl) {
-          activeVideoEl.pause();
-          activeVideoEl = null;
+        if (videoWatchdogTimeout) {
+          clearTimeout(videoWatchdogTimeout);
+          videoWatchdogTimeout = null;
         }
+        document.querySelectorAll("#stage video").forEach((vid) => {
+          try {
+            vid.pause();
+          } catch (e) {}
+        });
+        activeVideoEl = null;
         buildSlides(list);
         buildDots(list);
         
@@ -1631,7 +1677,16 @@
           }
           
           await clearStore('cached-ads');
-          await putItems('cached-ads', dbItems);
+          try {
+            await putItems('cached-ads', dbItems);
+          } catch (storageErr) {
+            console.warn("Storage quota exceeded or blob save failed, saving metadata only:", storageErr);
+            const safeItems = dbItems.map(item => {
+              const { fileBlob, ...rest } = item;
+              return rest;
+            });
+            await putItems('cached-ads', safeItems);
+          }
           console.log('Display media cache updated successfully.');
         } catch (err) {
           console.error("Failed to cache display ads locally:", err);

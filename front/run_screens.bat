@@ -4,28 +4,30 @@ title St-Philopateer Screens Launcher
 echo Opening screens display in kiosk fullscreen mode...
 set "URL=https://st-philopateer.github.io/Screens/front/index.html"
 
+set "FLAGS=--kiosk --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding"
+
 if exist "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe" (
-    start "" "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe" --kiosk --user-data-dir="%TEMP%\BraveKioskProfile" "%URL%"
+    start "" "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe" %FLAGS% --user-data-dir="%TEMP%\BraveKioskProfile" "%URL%"
     goto next
 )
 if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" (
-    start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk --user-data-dir="%TEMP%\ChromeKioskProfile" "%URL%"
+    start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" %FLAGS% --user-data-dir="%TEMP%\ChromeKioskProfile" "%URL%"
     goto next
 )
 if exist "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" (
-    start "" "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" --kiosk --user-data-dir="%TEMP%\ChromeKioskProfile" "%URL%"
+    start "" "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" %FLAGS% --user-data-dir="%TEMP%\ChromeKioskProfile" "%URL%"
     goto next
 )
 if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" (
-    start "" "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --kiosk --user-data-dir="%TEMP%\EdgeKioskProfile" "%URL%"
+    start "" "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" %FLAGS% --user-data-dir="%TEMP%\EdgeKioskProfile" "%URL%"
     goto next
 )
 if exist "C:\Program Files\Microsoft\Edge\Application\msedge.exe" (
-    start "" "C:\Program Files\Microsoft\Edge\Application\msedge.exe" --kiosk --user-data-dir="%TEMP%\EdgeKioskProfile" "%URL%"
+    start "" "C:\Program Files\Microsoft\Edge\Application\msedge.exe" %FLAGS% --user-data-dir="%TEMP%\EdgeKioskProfile" "%URL%"
     goto next
 )
 if exist "C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe" (
-    start "" "C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe" --kiosk --user-data-dir="%TEMP%\BraveKioskProfile" "%URL%"
+    start "" "C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe" %FLAGS% --user-data-dir="%TEMP%\BraveKioskProfile" "%URL%"
     goto next
 )
 
