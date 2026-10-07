@@ -1,4 +1,4 @@
-const CACHE_NAME = 'screens-ads-v10';
+const CACHE_NAME = 'screens-ads-v11';
 const ASSETS = [
   './',
   'index.html',
@@ -28,18 +28,18 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// Network first strategy
+// Network first strategy with cache fallback for app shell and media
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   
-  if (url.pathname.startsWith('/api') || e.request.url.startsWith('ws')) {
+  if (e.request.method !== 'GET' || url.pathname.startsWith('/api') || e.request.url.startsWith('ws')) {
     return;
   }
 
   e.respondWith(
     fetch(e.request)
       .then((response) => {
-        if (response && response.status === 200 && response.type === 'basic') {
+        if (response && response.status === 200 && (response.type === 'basic' || response.type === 'cors')) {
           const responseToCache = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(e.request, responseToCache);
