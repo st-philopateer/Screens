@@ -1258,41 +1258,71 @@
       function buildSlides(list) {
         const stage = document.getElementById("stage");
         if (!stage) return;
-        document.querySelectorAll(".slide").forEach((s) => s.remove());
 
         const emptyFallback = document.getElementById("stage-empty-fallback");
         if (emptyFallback) {
           emptyFallback.style.display = list.length === 0 ? "flex" : "none";
         }
+        if (!list.length) {
+          document.querySelectorAll(".slide").forEach((s) => s.remove());
+          return;
+        }
+
+        // Check if existing slides in DOM already match the active playlist
+        const existingSlides = Array.from(stage.querySelectorAll(".slide"));
+        const sameList = existingSlides.length === list.length &&
+          list.every((ad, i) => {
+            const el = document.getElementById(`slide-${i}`);
+            return el && el.getAttribute("data-ad-id") === String(ad.id);
+          });
+
+        if (sameList) {
+          // Playlist structure is unchanged. Keep all DOM nodes intact and smoothly sync media URLs!
+          list.forEach((ad, i) => {
+            const slideEl = document.getElementById(`slide-${i}`);
+            if (!slideEl) return;
+            const mediaUrl = getMediaUrl(ad);
+            if (!mediaUrl) return;
+
+            if (ad.type === "video") {
+              const v = slideEl.querySelector("video.bg-video");
+              if (v && v.src !== mediaUrl && (v.paused || current !== i)) {
+                v.src = mediaUrl;
+                v.load();
+              }
+            } else {
+              const img = slideEl.querySelector("img.bg-image");
+              const imgBlur = slideEl.querySelector("img.bg-image-blur");
+              if (img && img.src !== mediaUrl) img.src = mediaUrl;
+              if (imgBlur && imgBlur.src !== mediaUrl) imgBlur.src = mediaUrl;
+            }
+          });
+          return;
+        }
+
+        // Only rebuild DOM if the list items or ordering actually changed!
+        document.querySelectorAll(".slide").forEach((s) => s.remove());
 
         list.forEach((ad, i) => {
           const div = document.createElement("div");
           div.className = "slide";
           div.id = `slide-${i}`;
+          div.setAttribute("data-ad-id", String(ad.id));
 
           const isVideo = ad.type === "video";
           const mediaUrl = getMediaUrl(ad);
-          const hasSrc = mediaUrl !== "";
+          const hasSrc = mediaUrl !== "" || (ad.src && ad.src.trim() !== "");
+          const activeSrc = mediaUrl || (ad.src ? ad.src.trim() : "");
           
           let bgContent;
           if (hasSrc && isVideo) {
             bgContent = `
-              <video class="bg-video" muted playsinline preload="metadata"></video>
-              <div class="slide-fallback-card" style="display:none;position:absolute;inset:0;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at center, #182035 0%, #070912 100%);z-index:1;text-align:center;padding:40px;">
-                <img src="logo.png" style="width:130px;height:130px;object-fit:contain;margin-bottom:24px;filter:drop-shadow(0 6px 20px rgba(0,0,0,0.7));" alt="">
-                <h2 style="font-family:'Syne',sans-serif;font-size:clamp(24px,3.5vw,40px);font-weight:700;color:#fff;margin-bottom:12px;text-shadow:0 3px 12px rgba(0,0,0,0.8);">${ad.title || "كنيسة الشهيد العظيم فيلوباتير مرقوريوس"}</h2>
-                ${ad.desc ? `<p style="font-size:clamp(14px,1.8vw,20px);color:rgba(255,255,255,0.85);max-width:700px;line-height:1.6;margin-top:8px;">${ad.desc}</p>` : ""}
-              </div>
+              <video class="bg-video" muted playsinline preload="auto" src="${activeSrc}"></video>
             `;
           } else if (hasSrc) {
             bgContent = `
-              <img class="bg-image-blur" src="${mediaUrl}" alt="">
-              <img class="bg-image" src="${mediaUrl}" alt="${ad.title || ""}" decoding="async">
-              <div class="slide-fallback-card" style="display:none;position:absolute;inset:0;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at center, #182035 0%, #070912 100%);z-index:1;text-align:center;padding:40px;">
-                <img src="logo.png" style="width:130px;height:130px;object-fit:contain;margin-bottom:24px;filter:drop-shadow(0 6px 20px rgba(0,0,0,0.7));" alt="">
-                <h2 style="font-family:'Syne',sans-serif;font-size:clamp(24px,3.5vw,40px);font-weight:700;color:#fff;margin-bottom:12px;text-shadow:0 3px 12px rgba(0,0,0,0.8);">${ad.title || "كنيسة الشهيد العظيم فيلوباتير مرقوريوس"}</h2>
-                ${ad.desc ? `<p style="font-size:clamp(14px,1.8vw,20px);color:rgba(255,255,255,0.85);max-width:700px;line-height:1.6;margin-top:8px;">${ad.desc}</p>` : ""}
-              </div>
+              <img class="bg-image-blur" src="${activeSrc}" alt="">
+              <img class="bg-image" src="${activeSrc}" alt="${ad.title || ""}" loading="eager" decoding="async">
             `;
           } else {
             bgContent = `
@@ -1324,42 +1354,40 @@
           `;
           stage.appendChild(div);
 
-          if (hasSrc && isVideo) {
-            const v = div.querySelector("video.bg-video");
-            if (v && mediaUrl) v.src = mediaUrl;
-          } else if (hasSrc) {
+          if (hasSrc && !isVideo) {
             const imgEl = div.querySelector("img.bg-image");
             const imgBlurEl = div.querySelector("img.bg-image-blur");
             const directUrl = (ad.src && ad.src.trim()) || "";
-            const onImgErr = async function() {
-              console.warn("Image load failed on slide", ad.id, this.src);
-              // 1. If currently on a blob URL that failed, fallback to direct server URL
-              if (directUrl && this.src !== directUrl && navigator.onLine) {
-                console.log("Blob URL failed, falling back to direct server URL:", directUrl);
-                this.src = directUrl;
-                return;
-              }
 
-              // 2. If direct URL failed (e.g. offline), try local IndexedDB blob
-              try {
-                const cached = await getItem('cached-ads', ad.id);
-                if (cached && isValidBlob(cached.fileBlob)) {
-                  const blobUrl = getBlobUrl(cached.id, cached.fileBlob);
-                  if (this.src !== blobUrl) {
-                    console.log("Server URL failed, falling back to cached blob:", ad.id);
-                    this.src = blobUrl;
-                    return;
+            const setupRetry = (img) => {
+              if (!img) return;
+              let retryTimer = null;
+              img.onerror = () => {
+                if (retryTimer) return;
+                retryTimer = setTimeout(async () => {
+                  retryTimer = null;
+                  try {
+                    const cached = await getItem('cached-ads', ad.id);
+                    if (cached && isValidBlob(cached.fileBlob)) {
+                      const bUrl = getBlobUrl(cached.id, cached.fileBlob);
+                      if (bUrl && img.src !== bUrl) {
+                        img.src = bUrl;
+                        return;
+                      }
+                    }
+                  } catch (e) {}
+
+                  if (directUrl && img.src !== directUrl) {
+                    img.src = directUrl;
+                  } else if (navigator.onLine && directUrl) {
+                    img.src = `${directUrl}?retry=${Date.now()}`;
                   }
-                }
-              } catch (e) {}
-
-              // 3. Fallback: hide broken image and display the stylized church fallback card
-              this.style.opacity = '0';
-              const fallbackCard = div.querySelector('.slide-fallback-card');
-              if (fallbackCard) fallbackCard.style.display = 'flex';
+                }, 2000);
+              };
             };
-            if (imgEl) imgEl.onerror = onImgErr;
-            if (imgBlurEl) imgBlurEl.onerror = onImgErr;
+
+            setupRetry(imgEl);
+            setupRetry(imgBlurEl);
           }
         });
       }
@@ -1601,38 +1629,43 @@
               goTo(current + 1);
             };
 
+            let videoRetryCount = 0;
             v.onerror = async () => {
-              console.error("Video error on slide " + current, v.error);
-              // Try local blob if we were on direct URL
+              console.warn("Video playback issue on slide " + current, v.error);
+              if (videoRetryCount > 3) {
+                goTo(current + 1);
+                return;
+              }
+              videoRetryCount++;
+
               try {
                 const cached = await getItem('cached-ads', ad.id);
                 if (cached && isValidBlob(cached.fileBlob)) {
                   const bUrl = getBlobUrl(cached.id, cached.fileBlob);
                   if (v.src !== bUrl) {
-                    console.log("Retrying video with cached local blob:", ad.id);
+                    console.log("Switching video to cached local blob:", ad.id);
                     v.src = bUrl;
-                    v.currentTime = 0;
-                    v.play().catch(() => goTo(current + 1));
+                    v.load();
+                    v.play().catch(() => {});
                     return;
                   }
                 }
               } catch (e) {}
 
-              // Try direct URL if we were on blob URL
               if (ad.src && v.src !== ad.src && navigator.onLine) {
                 console.log("Retrying video with direct server URL:", ad.src);
                 v.src = ad.src;
-                v.currentTime = 0;
-                v.play().catch(() => goTo(current + 1));
+                v.load();
+                v.play().catch(() => {});
                 return;
               }
 
-              // Show fallback card if video cannot play
-              v.style.opacity = '0';
-              const fallbackCard = slideEl ? slideEl.querySelector('.slide-fallback-card') : null;
-              if (fallbackCard) fallbackCard.style.display = 'flex';
-
-              setTimeout(() => goTo(current + 1), 2500);
+              setTimeout(() => {
+                try {
+                  v.load();
+                  v.play().catch(() => {});
+                } catch (e) {}
+              }, 1500);
             };
             
             v.ontimeupdate = () => {
@@ -1642,11 +1675,14 @@
             };
 
             // Watchdog fallback in case video freezes or gets stuck
-            const fallbackDur = (ad.duration && ad.duration > 0 ? ad.duration : 15) + 5;
+            const calcDur = v.duration && !isNaN(v.duration) && v.duration > 0 ? v.duration : (ad.duration || 15);
             videoWatchdogTimeout = setTimeout(() => {
-              console.warn("Video watchdog triggered, advancing slide...");
+              if (v && !v.paused && !v.ended && v.currentTime > 0) {
+                return;
+              }
+              console.warn("Video watchdog advancing slide...");
               goTo(current + 1);
-            }, fallbackDur * 1000);
+            }, (calcDur + 5) * 1000);
 
             v.onloadedmetadata = () => {
               if (v.duration && v.duration > 0) {
@@ -1837,6 +1873,22 @@
         }
       }
 
+      async function fetchMediaBlobWithRetry(src, maxRetries = 3) {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            const res = await fetch(src);
+            if (res.ok) {
+              const blob = await res.blob();
+              if (isValidBlob(blob)) return blob;
+            }
+          } catch (err) {
+            if (attempt === maxRetries) break;
+            await new Promise(r => setTimeout(r, 1000 * attempt));
+          }
+        }
+        return null;
+      }
+
       // Background local caching of server ads and their media files as Blobs
       async function cacheAdsLocally(serverAds) {
         if (!serverAds || !serverAds.length || !navigator.onLine) return;
@@ -1844,7 +1896,7 @@
           const cached = await getAllItems('cached-ads');
           const cachedMap = new Map((cached || []).map(item => [item.id, item]));
           
-          // Download missing or updated media in parallel
+          // Download missing or updated media in parallel with auto-retry
           const downloadPromises = serverAds.map(async (ad) => {
             const cachedAd = cachedMap.get(ad.id);
             // If already cached with a valid Blob and same URL, reuse existing blob!
@@ -1852,16 +1904,16 @@
               return { ...ad, fileBlob: cachedAd.fileBlob };
             }
             if (ad.src && typeof ad.src === "string" && ad.src.trim() !== "") {
-              try {
-                const res = await fetch(ad.src.trim());
-                if (res.ok) {
-                  const blob = await res.blob();
-                  if (isValidBlob(blob)) {
-                    return { ...ad, fileBlob: blob };
-                  }
+              const blob = await fetchMediaBlobWithRetry(ad.src.trim(), 3);
+              if (blob) {
+                if (ad.type !== 'video') {
+                  try {
+                    const preImg = new Image();
+                    preImg.src = URL.createObjectURL(blob);
+                    if (preImg.decode) await preImg.decode().catch(() => {});
+                  } catch (e) {}
                 }
-              } catch (err) {
-                console.warn(`Failed to fetch media blob for ad ${ad.id}:`, err);
+                return { ...ad, fileBlob: blob };
               }
             }
             return cachedAd && isValidBlob(cachedAd.fileBlob) ? { ...ad, fileBlob: cachedAd.fileBlob } : { ...ad, fileBlob: null };
