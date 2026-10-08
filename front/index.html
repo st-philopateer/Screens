@@ -1950,11 +1950,17 @@
 
           const dbItems = await Promise.all(downloadPromises);
           
-          // Remove ads that no longer exist on server from IndexedDB
+          // Remove ads that no longer exist on server from IndexedDB and permanent Cache
           const serverAdIds = new Set(serverAds.map(a => a.id));
-          for (const [cachedId] of cachedMap) {
+          for (const [cachedId, cachedAd] of cachedMap) {
             if (!serverAdIds.has(cachedId)) {
               try { await deleteItem('cached-ads', cachedId); } catch (e) {}
+              try {
+                if ('caches' in window && cachedAd && cachedAd.src) {
+                  const mCache = await caches.open('screens-media-permanent-v1');
+                  await mCache.delete(cachedAd.src.trim());
+                }
+              } catch (e) {}
             }
           }
 
