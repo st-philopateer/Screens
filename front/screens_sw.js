@@ -1,9 +1,10 @@
-const CACHE_NAME = 'screens-ads-v11';
+const CACHE_NAME = 'screens-ads-v14';
 const ASSETS = [
   './',
   'index.html',
   'screens_manifest.json',
-  'logo.png'
+  'logo.png',
+  'logo2.png'
 ];
 
 self.addEventListener('install', (e) => {
@@ -28,18 +29,19 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// Network first strategy with cache fallback for app shell and media
+// Cache-falling app shell strategy for same-origin resources only
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   
-  if (e.request.method !== 'GET' || url.pathname.startsWith('/api') || e.request.url.startsWith('ws')) {
+  // Only intercept same-origin app shell requests; let external Supabase media stream directly
+  if (e.request.method !== 'GET' || url.origin !== self.location.origin) {
     return;
   }
 
   e.respondWith(
     fetch(e.request)
       .then((response) => {
-        if (response && response.status === 200 && (response.type === 'basic' || response.type === 'cors')) {
+        if (response && response.status === 200) {
           const responseToCache = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(e.request, responseToCache);
@@ -53,6 +55,7 @@ self.addEventListener('fetch', (e) => {
           if (url.pathname.endsWith('/screens') || url.pathname.endsWith('/index.html') || url.pathname === '/') {
             return caches.match('index.html');
           }
+          return new Response('Offline', { status: 503, statusText: 'Offline' });
         });
       })
   );

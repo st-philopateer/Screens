@@ -41,7 +41,7 @@
         --panel-bg-2: rgba(255, 255, 255, 0.025);
 
         /* Stage tokens — ALWAYS dark, never themed */
-        --stage-bg: #000;
+        --stage-bg: radial-gradient(ellipse at center, #162035 0%, #070912 100%);
         --stage-topbar-grad: linear-gradient(
           to bottom,
           rgba(0, 0, 0, 0.55) 0%,
@@ -126,7 +126,7 @@
         position: absolute;
         inset: 0;
         overflow: hidden;
-        background: #000;
+        background: radial-gradient(ellipse at center, #162035 0%, #070912 100%);
       }
       .slide-bg img.bg-image,
       .slide-bg video.bg-video {
@@ -888,6 +888,11 @@
 
         <div id="progress-wrap"><div id="progress-bar"></div></div>
         <div id="slide-counter"></div>
+        <div id="stage-empty-fallback" style="display:none;position:absolute;inset:0;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at center, #182035 0%, #070912 100%);z-index:2;text-align:center;padding:40px;">
+          <img src="logo.png" style="width:160px;height:160px;object-fit:contain;margin-bottom:24px;filter:drop-shadow(0 8px 24px rgba(0,0,0,0.7));" alt="">
+          <h2 style="font-family:'Syne',sans-serif;font-size:clamp(26px,4vw,44px);font-weight:700;color:#fff;margin-bottom:12px;text-shadow:0 3px 12px rgba(0,0,0,0.8);">كنيسة الشهيد العظيم فيلوباتير مرقوريوس</h2>
+          <p style="font-size:clamp(15px,2vw,22px);color:rgba(255,255,255,0.8);max-width:700px;line-height:1.6;">خدمة شاشات العرض والإعلانات</p>
+        </div>
       </div>
 
       <div id="panel">
@@ -1125,6 +1130,26 @@
         }
       }
 
+      async function deleteItem(storeName, key) {
+        try {
+          const db = await openDB();
+          return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            store.delete(key);
+            tx.oncomplete = () => resolve();
+            tx.onerror = (e) => reject(e.target.error);
+          });
+        } catch (err) {
+          if (storeName === 'offline-ads') {
+            memoryOfflineStore = memoryOfflineStore.filter(i => i.tempId !== key);
+          } else {
+            memoryCachedStore = memoryCachedStore.filter(i => i.id !== key);
+          }
+          return Promise.resolve();
+        }
+      }
+
       // Register service worker with specific screens scope immediately
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('screens_sw.js', { scope: './' })
@@ -1191,22 +1216,73 @@
 
       let ws = null;
 
+      function isValidBlob(b) {
+        return !!b && (b instanceof Blob || (typeof b === 'object' && typeof b.size === 'number' && b.size > 500 && typeof b.slice === 'function'));
+      }
+
+      const blobUrlRegistry = new Map();
+
+      function getBlobUrl(adId, blob) {
+        if (!isValidBlob(blob)) return "";
+        const entry = blobUrlRegistry.get(adId);
+        if (entry && entry.blob === blob) {
+          return entry.url;
+        }
+        if (entry && entry.url) {
+          try { URL.revokeObjectURL(entry.url); } catch (e) {}
+        }
+        try {
+          const url = URL.createObjectURL(blob);
+          blobUrlRegistry.set(adId, { blob, url });
+          return url;
+        } catch (e) {
+          console.warn("createObjectURL failed:", e);
+          return "";
+        }
+      }
+
+      function getMediaUrl(ad) {
+        if (!ad) return "";
+        // 1. If valid cached Blob exists in memory, use local Blob URL (instant, zero lag, 100% offline-ready)
+        if (isValidBlob(ad.fileBlob)) {
+          const bUrl = getBlobUrl(ad.id, ad.fileBlob);
+          if (bUrl) return bUrl;
+        }
+        // 2. Direct Supabase CDN URL (immediate display while media is caching in background)
+        if (ad.src && typeof ad.src === "string" && ad.src.trim() !== "") {
+          return ad.src.trim();
+        }
+        return "";
+      }
+
       function buildSlides(list) {
         const stage = document.getElementById("stage");
+        if (!stage) return;
         document.querySelectorAll(".slide").forEach((s) => s.remove());
+
+        const emptyFallback = document.getElementById("stage-empty-fallback");
+        if (emptyFallback) {
+          emptyFallback.style.display = list.length === 0 ? "flex" : "none";
+        }
+
         list.forEach((ad, i) => {
           const div = document.createElement("div");
           div.className = "slide";
           div.id = `slide-${i}`;
 
           const isVideo = ad.type === "video";
-          const hasSrc = (ad.src && ad.src.trim() !== "") || ad.fileBlob;
-          const mediaUrl = ad.fileBlob ? URL.createObjectURL(ad.fileBlob) : ad.src;
+          const mediaUrl = getMediaUrl(ad);
+          const hasSrc = mediaUrl !== "";
           
           let bgContent;
           if (hasSrc && isVideo) {
             bgContent = `
               <video class="bg-video" muted playsinline preload="metadata"></video>
+              <div class="slide-fallback-card" style="display:none;position:absolute;inset:0;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at center, #182035 0%, #070912 100%);z-index:1;text-align:center;padding:40px;">
+                <img src="logo.png" style="width:130px;height:130px;object-fit:contain;margin-bottom:24px;filter:drop-shadow(0 6px 20px rgba(0,0,0,0.7));" alt="">
+                <h2 style="font-family:'Syne',sans-serif;font-size:clamp(24px,3.5vw,40px);font-weight:700;color:#fff;margin-bottom:12px;text-shadow:0 3px 12px rgba(0,0,0,0.8);">${ad.title || "كنيسة الشهيد العظيم فيلوباتير مرقوريوس"}</h2>
+                ${ad.desc ? `<p style="font-size:clamp(14px,1.8vw,20px);color:rgba(255,255,255,0.85);max-width:700px;line-height:1.6;margin-top:8px;">${ad.desc}</p>` : ""}
+              </div>
             `;
           } else if (hasSrc) {
             bgContent = `
@@ -1222,8 +1298,9 @@
             bgContent = `
               <div class="ph-glow" style="width:400px;height:400px;background:${ad.glowColor || "#6366f1"};top:20%;left:20%;"></div>
               <div class="ph-glow" style="width:250px;height:250px;background:${ad.glowColor || "#6366f1"};bottom:10%;right:15%;opacity:0.25;"></div>
-              <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
-                <span style="font-size:clamp(60px,12vw,120px);filter:drop-shadow(0 0 40px ${ad.glowColor || "#6366f1"});">🖼</span>
+              <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;">
+                <img src="logo.png" style="width:120px;height:120px;object-fit:contain;margin-bottom:16px;filter:drop-shadow(0 4px 16px rgba(0,0,0,0.6));" alt="">
+                <h2 style="font-family:'Syne',sans-serif;font-size:32px;font-weight:700;color:#fff;">${ad.title || "كنيسة الشهيد العظيم فيلوباتير مرقوريوس"}</h2>
               </div>
             `;
           }
@@ -1249,34 +1326,34 @@
 
           if (hasSrc && isVideo) {
             const v = div.querySelector("video.bg-video");
-            if (v) v.src = mediaUrl;
+            if (v && mediaUrl) v.src = mediaUrl;
           } else if (hasSrc) {
             const imgEl = div.querySelector("img.bg-image");
             const imgBlurEl = div.querySelector("img.bg-image-blur");
-            const fallbackSrc = ad.src || "";
+            const directUrl = (ad.src && ad.src.trim()) || "";
             const onImgErr = async function() {
               console.warn("Image load failed on slide", ad.id, this.src);
-              // 1. First attempt: retrieve blob from IndexedDB cache
+              // 1. If currently on a blob URL that failed, fallback to direct server URL
+              if (directUrl && this.src !== directUrl && navigator.onLine) {
+                console.log("Blob URL failed, falling back to direct server URL:", directUrl);
+                this.src = directUrl;
+                return;
+              }
+
+              // 2. If direct URL failed (e.g. offline), try local IndexedDB blob
               try {
                 const cached = await getItem('cached-ads', ad.id);
-                if (cached && cached.fileBlob) {
-                  const blobUrl = URL.createObjectURL(cached.fileBlob);
+                if (cached && isValidBlob(cached.fileBlob)) {
+                  const blobUrl = getBlobUrl(cached.id, cached.fileBlob);
                   if (this.src !== blobUrl) {
-                    console.log("Recovered slide image from IndexedDB blob:", ad.id);
+                    console.log("Server URL failed, falling back to cached blob:", ad.id);
                     this.src = blobUrl;
                     return;
                   }
                 }
               } catch (e) {}
 
-              // 2. Second attempt: if online and this wasn't the direct URL, try direct URL
-              if (navigator.onLine && fallbackSrc && this.src !== fallbackSrc) {
-                console.log("Trying direct fallback URL:", fallbackSrc);
-                this.src = fallbackSrc;
-                return;
-              }
-
-              // 3. Final safety: hide broken image and display the stylized church fallback card
+              // 3. Fallback: hide broken image and display the stylized church fallback card
               this.style.opacity = '0';
               const fallbackCard = div.querySelector('.slide-fallback-card');
               if (fallbackCard) fallbackCard.style.display = 'flex';
@@ -1310,9 +1387,10 @@
           div.id = `panel-item-${i}`;
           div.onclick = () => goTo(i);
 
-          const hasSrc = (ad.src && ad.src.trim() !== "") || ad.fileBlob;
           const isVideo = ad.type === "video";
-          const mediaUrl = ad.fileBlob ? URL.createObjectURL(ad.fileBlob) : ad.src;
+          const mediaUrl = getMediaUrl(ad);
+          const hasSrc = mediaUrl !== "";
+          const directSrc = (ad.src && ad.src.trim()) || "";
           
           div.innerHTML = `
             <div class="panel-num">${i + 1}</div>
@@ -1321,7 +1399,7 @@
                 hasSrc
                   ? isVideo
                     ? `<video src="${mediaUrl}" muted></video>`
-                    : `<img src="${mediaUrl}" alt="">`
+                    : `<img src="${mediaUrl}" alt="" onerror="if(this.src!=='${directSrc}'){this.src='${directSrc}';}else{this.style.display='none';}">`
                   : `<div class="panel-thumb-placeholder">🖼</div>`
               }
               ${hasSrc ? `<div class="media-type-badge">${isVideo ? "فيديو" : "صورة"}</div>` : ""}
@@ -1523,16 +1601,38 @@
               goTo(current + 1);
             };
 
-            v.onerror = () => {
+            v.onerror = async () => {
               console.error("Video error on slide " + current, v.error);
-              if (ad.src && v.src !== ad.src) {
+              // Try local blob if we were on direct URL
+              try {
+                const cached = await getItem('cached-ads', ad.id);
+                if (cached && isValidBlob(cached.fileBlob)) {
+                  const bUrl = getBlobUrl(cached.id, cached.fileBlob);
+                  if (v.src !== bUrl) {
+                    console.log("Retrying video with cached local blob:", ad.id);
+                    v.src = bUrl;
+                    v.currentTime = 0;
+                    v.play().catch(() => goTo(current + 1));
+                    return;
+                  }
+                }
+              } catch (e) {}
+
+              // Try direct URL if we were on blob URL
+              if (ad.src && v.src !== ad.src && navigator.onLine) {
                 console.log("Retrying video with direct server URL:", ad.src);
                 v.src = ad.src;
                 v.currentTime = 0;
                 v.play().catch(() => goTo(current + 1));
-              } else {
-                setTimeout(() => goTo(current + 1), 2000);
+                return;
               }
+
+              // Show fallback card if video cannot play
+              v.style.opacity = '0';
+              const fallbackCard = slideEl ? slideEl.querySelector('.slide-fallback-card') : null;
+              if (fallbackCard) fallbackCard.style.display = 'flex';
+
+              setTimeout(() => goTo(current + 1), 2500);
             };
             
             v.ontimeupdate = () => {
@@ -1680,131 +1780,143 @@
         goTo(current);
       }
 
-      function updateLiveDOMMedia() {
-        console.log("Propagating cached media blobs into active DOM slides...");
-        (ADS || []).forEach((ad, i) => {
-          if (!ad.fileBlob) return;
-          const slideEl = document.getElementById(`slide-${i}`);
-          if (!slideEl) return;
-          
-          const blobUrl = URL.createObjectURL(ad.fileBlob);
-          
-          if (ad.type === "video") {
-            const v = slideEl.querySelector("video.bg-video");
-            if (v && v.src !== blobUrl && (v.paused || current !== i)) {
-              v.src = blobUrl;
-            }
-          } else {
-            const img = slideEl.querySelector("img.bg-image");
-            const imgBlur = slideEl.querySelector("img.bg-image-blur");
-            if (img && img.src !== blobUrl) img.src = blobUrl;
-            if (imgBlur && imgBlur.src !== blobUrl) imgBlur.src = blobUrl;
-          }
-        });
-      }
-
       async function loadFromServer(preserveIndex) {
-        // Step 1: Immediate local startup from IndexedDB cache
+        // Step 1: Pre-populate in-memory blob map from IndexedDB cache
+        let cachedBlobsMap = new Map();
         try {
           const cached = await getAllItems('cached-ads');
-          if (cached && cached.length > 0) {
-            console.log(`Starting immediately with ${cached.length} locally cached ads.`);
-            ADS = cached;
-            await renderPlaylist(preserveIndex);
+          if (cached && cached.length) {
+            cached.forEach(c => {
+              if (c && c.id && isValidBlob(c.fileBlob)) {
+                cachedBlobsMap.set(c.id, c.fileBlob);
+              }
+            });
           }
         } catch (e) {
-          console.warn("Could not read local cache on startup:", e);
+          console.warn("Could not read local blobs from IndexedDB:", e);
         }
 
-        // Step 2: Background sync with Supabase cloud (if online)
+        // Step 2: Online sync with Supabase (primary)
         try {
           const { data: serverAds, error } = await sb.from('ads').select('*').order('order');
           if (error) throw error;
           
-          console.log(`Synced ${serverAds.length} ads from Supabase. Updating local media blobs...`);
-          // Cache server ads and their media files as Blobs
-          await cacheAdsLocally(serverAds);
-          
-          // Re-read cached-ads which now hold the local Blobs
-          const cachedWithBlobs = await getAllItems('cached-ads');
-          const blobMap = new Map((cachedWithBlobs || []).map(item => [item.id, item.fileBlob]));
-          
+          console.log(`Loaded ${serverAds.length} ads from Supabase.`);
+
           ADS = serverAds.map(ad => ({
             ...ad,
-            fileBlob: blobMap.get(ad.id) || null
+            fileBlob: cachedBlobsMap.get(ad.id) || null
           }));
           
+          // Render playlist immediately! No blocking!
           await renderPlaylist(preserveIndex !== undefined ? preserveIndex : current);
+          
+          // Background caching of all media files into IndexedDB (non-blocking)
+          cacheAdsLocally(serverAds);
+          return;
         } catch (e) {
-          console.warn("Supabase fetch failed (offline or network error). Keeping local playlist:", e);
-          if (!ADS || ADS.length === 0) {
-            const cached = await getAllItems('cached-ads');
-            if (cached && cached.length > 0) {
-              ADS = cached;
-              await renderPlaylist(preserveIndex);
-            }
+          console.warn("Supabase fetch failed (offline or network error):", e);
+        }
+
+        // Step 3: Offline fallback from local IndexedDB cache
+        try {
+          const cached = await getAllItems('cached-ads');
+          if (cached && cached.length > 0) {
+            console.log(`Running in offline mode with ${cached.length} cached ads.`);
+            ADS = cached;
+            await renderPlaylist(preserveIndex !== undefined ? preserveIndex : current);
+          } else {
+            console.warn("No local cached ads found.");
+            ADS = [];
+            await renderPlaylist();
           }
+        } catch (err) {
+          console.error("Failed to load local offline cache:", err);
+          ADS = [];
+          await renderPlaylist();
         }
       }
 
       // Background local caching of server ads and their media files as Blobs
       async function cacheAdsLocally(serverAds) {
-        if (!serverAds || !serverAds.length) return;
+        if (!serverAds || !serverAds.length || !navigator.onLine) return;
         try {
           const cached = await getAllItems('cached-ads');
           const cachedMap = new Map((cached || []).map(item => [item.id, item]));
-          const dbItems = [];
           
-          for (const ad of serverAds) {
+          // Download missing or updated media in parallel
+          const downloadPromises = serverAds.map(async (ad) => {
             const cachedAd = cachedMap.get(ad.id);
-            // If already cached with a valid fileBlob and src has not changed, reuse existing blob!
-            if (cachedAd && cachedAd.src === ad.src && cachedAd.fileBlob) {
-              dbItems.push(cachedAd);
-            } else if (ad.src) {
+            // If already cached with a valid Blob and same URL, reuse existing blob!
+            if (cachedAd && cachedAd.src === ad.src && isValidBlob(cachedAd.fileBlob)) {
+              return { ...ad, fileBlob: cachedAd.fileBlob };
+            }
+            if (ad.src && typeof ad.src === "string" && ad.src.trim() !== "") {
               try {
-                const res = await fetch(ad.src);
+                const res = await fetch(ad.src.trim());
                 if (res.ok) {
                   const blob = await res.blob();
-                  dbItems.push({ ...ad, fileBlob: blob });
-                } else {
-                  dbItems.push(cachedAd || ad);
+                  if (isValidBlob(blob)) {
+                    return { ...ad, fileBlob: blob };
+                  }
                 }
               } catch (err) {
-                // If fetch failed (e.g. offline), keep existing cached ad if available
-                dbItems.push(cachedAd || ad);
+                console.warn(`Failed to fetch media blob for ad ${ad.id}:`, err);
               }
-            } else {
-              dbItems.push(ad);
+            }
+            return cachedAd && isValidBlob(cachedAd.fileBlob) ? { ...ad, fileBlob: cachedAd.fileBlob } : { ...ad, fileBlob: null };
+          });
+
+          const dbItems = await Promise.all(downloadPromises);
+          
+          // Remove ads that no longer exist on server from IndexedDB
+          const serverAdIds = new Set(serverAds.map(a => a.id));
+          for (const [cachedId] of cachedMap) {
+            if (!serverAdIds.has(cachedId)) {
+              try { await deleteItem('cached-ads', cachedId); } catch (e) {}
             }
           }
-          
-          await clearStore('cached-ads');
+
+          // Save updated items into IndexedDB
           try {
             await putItems('cached-ads', dbItems);
           } catch (storageErr) {
-            console.warn("Storage quota exceeded or blob save failed, saving metadata only:", storageErr);
+            console.warn("Storage quota exceeded, saving metadata only:", storageErr);
             const safeItems = dbItems.map(item => {
               const { fileBlob, ...rest } = item;
               return rest;
             });
             await putItems('cached-ads', safeItems);
           }
-          console.log(`Display media cache updated: ${dbItems.length} items (${dbItems.filter(d => d.fileBlob).length} with blobs).`);
 
-          // Propagate blobs directly into active ADS and live DOM
-          const blobMap = new Map(dbItems.map(item => [item.id, item.fileBlob]));
-          let needsDomUpdate = false;
+          console.log(`Local media cache updated: ${dbItems.filter(d => isValidBlob(d.fileBlob)).length}/${dbItems.length} valid blobs stored.`);
+
+          // Update in-memory ADS and live DOM seamlessly
           if (ADS && ADS.length) {
-            ADS.forEach(ad => {
-              const b = blobMap.get(ad.id);
-              if (b && !ad.fileBlob) {
-                ad.fileBlob = b;
-                needsDomUpdate = true;
+            const newBlobMap = new Map(dbItems.filter(d => isValidBlob(d.fileBlob)).map(item => [item.id, item.fileBlob]));
+            ADS.forEach((ad, i) => {
+              const freshBlob = newBlobMap.get(ad.id);
+              if (freshBlob && (!ad.fileBlob || ad.fileBlob !== freshBlob)) {
+                ad.fileBlob = freshBlob;
+                const slideEl = document.getElementById(`slide-${i}`);
+                if (slideEl) {
+                  const bUrl = getBlobUrl(ad.id, freshBlob);
+                  if (bUrl) {
+                    if (ad.type === "video") {
+                      const v = slideEl.querySelector("video.bg-video");
+                      if (v && v.src !== bUrl && (v.paused || current !== i)) {
+                        v.src = bUrl;
+                      }
+                    } else {
+                      const img = slideEl.querySelector("img.bg-image");
+                      const imgBlur = slideEl.querySelector("img.bg-image-blur");
+                      if (img && img.src !== bUrl) img.src = bUrl;
+                      if (imgBlur && imgBlur.src !== bUrl) imgBlur.src = bUrl;
+                    }
+                  }
+                }
               }
             });
-          }
-          if (needsDomUpdate) {
-            updateLiveDOMMedia();
           }
         } catch (err) {
           console.error("Failed to cache display ads locally:", err);
@@ -1818,7 +1930,6 @@
 
       window.addEventListener('offline', () => {
         console.log("Browser network is offline. Running 100% on local offline media cache.");
-        updateLiveDOMMedia();
       });
 
       // Supabase Realtime listener
