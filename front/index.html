@@ -1150,6 +1150,18 @@
         }
       }
 
+      // One-time cache migration: clear any stale/corrupted legacy blobs from IndexedDB
+      (async function checkCacheMigration() {
+        const CACHE_CLEAN_KEY = 'lumina_cache_clean_v15';
+        if (!localStorage.getItem(CACHE_CLEAN_KEY)) {
+          try {
+            await clearStore('cached-ads');
+            localStorage.setItem(CACHE_CLEAN_KEY, 'done');
+            console.log('Legacy cache storage cleared for clean direct sync.');
+          } catch (e) {}
+        }
+      })();
+
       // Register service worker with specific screens scope immediately
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('screens_sw.js', { scope: './' })
@@ -1228,9 +1240,6 @@
         if (entry && entry.blob === blob) {
           return entry.url;
         }
-        if (entry && entry.url) {
-          try { URL.revokeObjectURL(entry.url); } catch (e) {}
-        }
         try {
           const url = URL.createObjectURL(blob);
           blobUrlRegistry.set(adId, { blob, url });
@@ -1243,16 +1252,17 @@
 
       function getMediaUrl(ad) {
         if (!ad) return "";
-        // 1. If valid cached Blob exists in memory, use local Blob URL (instant, zero lag, 100% offline-ready)
+        const direct = (ad.src && typeof ad.src === "string") ? ad.src.trim() : "";
+        // 1. Direct Supabase CDN URL: While online, always use direct URL (fast, stable, Cloudflare cached)
+        if (direct && (navigator.onLine || !isValidBlob(ad.fileBlob))) {
+          return direct;
+        }
+        // 2. Offline fallback: local cached Blob only when offline
         if (isValidBlob(ad.fileBlob)) {
           const bUrl = getBlobUrl(ad.id, ad.fileBlob);
           if (bUrl) return bUrl;
         }
-        // 2. Direct Supabase CDN URL (immediate display while media is caching in background)
-        if (ad.src && typeof ad.src === "string" && ad.src.trim() !== "") {
-          return ad.src.trim();
-        }
-        return "";
+        return direct;
       }
 
       function buildSlides(list) {
@@ -1322,7 +1332,7 @@
           } else if (hasSrc) {
             bgContent = `
               <img class="bg-image-blur" src="${activeSrc}" alt="">
-              <img class="bg-image" src="${activeSrc}" alt="${ad.title || ""}" loading="eager" decoding="async">
+              <img class="bg-image" src="${activeSrc}" alt="" loading="eager" decoding="async">
             `;
           } else {
             bgContent = `
@@ -1361,28 +1371,34 @@
 
             const setupRetry = (img) => {
               if (!img) return;
-              let retryTimer = null;
-              img.onerror = () => {
-                if (retryTimer) return;
-                retryTimer = setTimeout(async () => {
-                  retryTimer = null;
-                  try {
-                    const cached = await getItem('cached-ads', ad.id);
-                    if (cached && isValidBlob(cached.fileBlob)) {
-                      const bUrl = getBlobUrl(cached.id, cached.fileBlob);
-                      if (bUrl && img.src !== bUrl) {
-                        img.src = bUrl;
-                        return;
-                      }
-                    }
-                  } catch (e) {}
+              let directRetried = false;
+              img.onerror = async () => {
+                console.warn("Image load failed on slide for ad:", ad.title, img.src);
+                // 1. If currently pointing to anything other than directUrl, switch immediately to direct CDN URL!
+                if (!directRetried && directUrl && img.src !== directUrl) {
+                  directRetried = true;
+                  img.src = directUrl;
+                  return;
+                }
 
-                  if (directUrl && img.src !== directUrl) {
-                    img.src = directUrl;
-                  } else if (navigator.onLine && directUrl) {
-                    img.src = `${directUrl}?retry=${Date.now()}`;
+                // 2. If direct CDN URL failed (e.g. offline), try offline cached blob from IndexedDB
+                try {
+                  const cached = await getItem('cached-ads', ad.id);
+                  if (cached && isValidBlob(cached.fileBlob)) {
+                    const bUrl = getBlobUrl(cached.id, cached.fileBlob);
+                    if (bUrl && img.src !== bUrl) {
+                      img.src = bUrl;
+                      return;
+                    }
                   }
-                }, 2000);
+                } catch (e) {}
+
+                // 3. If online, retry with cache-busting timestamp
+                if (navigator.onLine && directUrl) {
+                  setTimeout(() => {
+                    img.src = `${directUrl}?retry=${Date.now()}`;
+                  }, 2500);
+                }
               };
             };
 
@@ -1426,7 +1442,7 @@
               ${
                 hasSrc
                   ? isVideo
-                    ? `<video src="${mediaUrl}" muted></video>`
+                    ? `<video src="${mediaUrl}" muted preload="metadata"></video>`
                     : `<img src="${mediaUrl}" alt="" onerror="if(this.src!=='${directSrc}'){this.src='${directSrc}';}else{this.style.display='none';}">`
                   : `<div class="panel-thumb-placeholder">🖼</div>`
               }
@@ -1839,15 +1855,17 @@
           
           console.log(`Loaded ${serverAds.length} ads from Supabase.`);
 
+          // When online, direct Supabase CDN URLs are used!
+          // We keep fileBlob null so direct CDN URLs are always used by default.
           ADS = serverAds.map(ad => ({
             ...ad,
-            fileBlob: cachedBlobsMap.get(ad.id) || null
+            fileBlob: null
           }));
           
           // Render playlist immediately! No blocking!
           await renderPlaylist(preserveIndex !== undefined ? preserveIndex : current);
           
-          // Background caching of all media files into IndexedDB (non-blocking)
+          // Background caching of all media files into IndexedDB for offline resilience (non-blocking)
           cacheAdsLocally(serverAds);
           return;
         } catch (e) {
@@ -1941,35 +1959,8 @@
             await putItems('cached-ads', safeItems);
           }
 
-          console.log(`Local media cache updated: ${dbItems.filter(d => isValidBlob(d.fileBlob)).length}/${dbItems.length} valid blobs stored.`);
-
-          // Update in-memory ADS and live DOM seamlessly
-          if (ADS && ADS.length) {
-            const newBlobMap = new Map(dbItems.filter(d => isValidBlob(d.fileBlob)).map(item => [item.id, item.fileBlob]));
-            ADS.forEach((ad, i) => {
-              const freshBlob = newBlobMap.get(ad.id);
-              if (freshBlob && (!ad.fileBlob || ad.fileBlob !== freshBlob)) {
-                ad.fileBlob = freshBlob;
-                const slideEl = document.getElementById(`slide-${i}`);
-                if (slideEl) {
-                  const bUrl = getBlobUrl(ad.id, freshBlob);
-                  if (bUrl) {
-                    if (ad.type === "video") {
-                      const v = slideEl.querySelector("video.bg-video");
-                      if (v && v.src !== bUrl && (v.paused || current !== i)) {
-                        v.src = bUrl;
-                      }
-                    } else {
-                      const img = slideEl.querySelector("img.bg-image");
-                      const imgBlur = slideEl.querySelector("img.bg-image-blur");
-                      if (img && img.src !== bUrl) img.src = bUrl;
-                      if (imgBlur && imgBlur.src !== bUrl) imgBlur.src = bUrl;
-                    }
-                  }
-                }
-              }
-            });
-          }
+          console.log(`Local media cache updated: ${dbItems.filter(d => isValidBlob(d.fileBlob)).length}/${dbItems.length} valid blobs stored for offline use.`);
+          // Background caching complete. Direct CDN URLs continue streaming without interruption while online.
         } catch (err) {
           console.error("Failed to cache display ads locally:", err);
         }
