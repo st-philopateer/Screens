@@ -43,18 +43,19 @@ echo Preparing companion script...
 set "LOCAL_COMPANION=%~dp0companion.ps1"
 set "CACHED_COMPANION=%PROFILE_DIR%\companion.ps1"
 
+:: Clean up obsolete VBScript file to prevent any Windows Script Host dialogs
+del "%TEMP%\launch.vbs" >nul 2>&1
+
 :: If companion.ps1 exists locally next to this bat file, use it and update cache
 if exist "%LOCAL_COMPANION%" (
     copy /y "%LOCAL_COMPANION%" "%CACHED_COMPANION%" >nul 2>&1
 ) else (
     :: Try downloading from GitHub in background, but do NOT block or fail if offline!
-    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Invoke-WebRequest -Uri 'https://st-philopateer.github.io/Screens/front/companion.ps1' -OutFile '%CACHED_COMPANION%' -TimeoutSec 3 } catch {}"
+    powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Invoke-WebRequest -Uri 'https://st-philopateer.github.io/Screens/front/companion.ps1' -OutFile '%CACHED_COMPANION%' -TimeoutSec 3 } catch {}"
 )
 
+:: Launch companion script natively in background (hidden, silent, zero VBScript errors)
 if exist "%CACHED_COMPANION%" (
-    echo Set WshShell = CreateObject("WScript.Shell") > "%TEMP%\launch.vbs"
-    echo WshShell.Run "powershell -ExecutionPolicy Bypass -File ""%CACHED_COMPANION%""", 0, false >> "%TEMP%\launch.vbs"
-    wscript "%TEMP%\launch.vbs"
-    del "%TEMP%\launch.vbs" >nul 2>&1
+    powershell -NoProfile -Command "Start-Process powershell -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"%CACHED_COMPANION%\"' -WindowStyle Hidden"
 )
 exit
