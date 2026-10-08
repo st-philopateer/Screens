@@ -988,6 +988,13 @@
         });
       }
 
+      // Request permanent storage on C: drive so the browser never clears cached ads
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().then((persisted) => {
+          console.log(persisted ? "Permanent disk storage granted on C: drive." : "Standard storage mode active.");
+        });
+      }
+
       // ── INDEXEDDB SETUP ──
       const DB_NAME = 'OnAirDB';
       const DB_VERSION = 1;
@@ -1914,6 +1921,20 @@
             if (ad.src && typeof ad.src === "string" && ad.src.trim() !== "") {
               const blob = await fetchMediaBlobWithRetry(ad.src.trim(), 3);
               if (blob) {
+                // Permanently store in browser Cache Storage on C: for offline network intercept
+                try {
+                  if ('caches' in window) {
+                    const mCache = await caches.open('screens-media-permanent-v1');
+                    await mCache.put(ad.src.trim(), new Response(blob, {
+                      headers: {
+                        'Content-Type': ad.type === 'video' ? 'video/mp4' : 'image/jpeg',
+                        'Content-Length': String(blob.size),
+                        'Cache-Control': 'public, max-age=31536000'
+                      }
+                    }));
+                  }
+                } catch (cErr) {}
+
                 if (ad.type !== 'video') {
                   try {
                     const preImg = new Image();

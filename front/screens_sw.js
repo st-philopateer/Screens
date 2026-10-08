@@ -1,4 +1,5 @@
-const CACHE_NAME = 'screens-ads-v16';
+const CACHE_NAME = 'screens-ads-v17';
+const MEDIA_CACHE_NAME = 'screens-media-permanent-v1';
 const ASSETS = [
   './',
   'index.html',
@@ -20,7 +21,7 @@ self.addEventListener('activate', (e) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME) {
+          if (key !== CACHE_NAME && key !== MEDIA_CACHE_NAME) {
             return caches.delete(key);
           }
         })
@@ -29,14 +30,35 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// Cache-falling app shell strategy for same-origin resources only
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  
-  // Only intercept same-origin app shell requests; let external Supabase media stream directly
-  if (e.request.method !== 'GET' || url.origin !== self.location.origin) {
+  if (e.request.method !== 'GET') return;
+
+  // 1. Permanent Supabase Media Cache: Network-first, offline fallback from disk on C:
+  if (url.origin.includes('supabase.co') && url.pathname.includes('/media/')) {
+    e.respondWith(
+      fetch(e.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const clone = response.clone();
+            caches.open(MEDIA_CACHE_NAME).then((cache) => cache.put(e.request, clone));
+          }
+          return response;
+        })
+        .catch(() => {
+          return caches.open(MEDIA_CACHE_NAME).then((cache) => {
+            return cache.match(e.request).then((matching) => {
+              if (matching) return matching;
+              return new Response('Offline media not available', { status: 503 });
+            });
+          });
+        })
+    );
     return;
   }
+
+  // 2. Same-origin app shell caching
+  if (url.origin !== self.location.origin) return;
 
   e.respondWith(
     fetch(e.request)

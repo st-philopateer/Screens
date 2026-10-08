@@ -4,30 +4,34 @@ title St-Philopateer Screens Launcher
 echo Opening screens display in kiosk fullscreen mode...
 set "URL=https://st-philopateer.github.io/Screens/front/index.html"
 
-set "FLAGS=--kiosk --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding"
+:: Permanent user data directory on C: drive (protected from Windows Temp Cleaners)
+set "PROFILE_DIR=%LOCALAPPDATA%\ScreensKioskProfile"
+if not exist "%PROFILE_DIR%" mkdir "%PROFILE_DIR%"
+
+set "FLAGS=--kiosk --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disk-cache-size=1073741824 --media-cache-size=1073741824"
 
 if exist "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe" (
-    start "" "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe" %FLAGS% --user-data-dir="%TEMP%\BraveKioskProfile" "%URL%"
+    start "" "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe" %FLAGS% --user-data-dir="%PROFILE_DIR%" "%URL%"
     goto next
 )
 if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" (
-    start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" %FLAGS% --user-data-dir="%TEMP%\ChromeKioskProfile" "%URL%"
+    start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" %FLAGS% --user-data-dir="%PROFILE_DIR%" "%URL%"
     goto next
 )
 if exist "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" (
-    start "" "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" %FLAGS% --user-data-dir="%TEMP%\ChromeKioskProfile" "%URL%"
+    start "" "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" %FLAGS% --user-data-dir="%PROFILE_DIR%" "%URL%"
     goto next
 )
 if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" (
-    start "" "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" %FLAGS% --user-data-dir="%TEMP%\EdgeKioskProfile" "%URL%"
+    start "" "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" %FLAGS% --user-data-dir="%PROFILE_DIR%" "%URL%"
     goto next
 )
 if exist "C:\Program Files\Microsoft\Edge\Application\msedge.exe" (
-    start "" "C:\Program Files\Microsoft\Edge\Application\msedge.exe" %FLAGS% --user-data-dir="%TEMP%\EdgeKioskProfile" "%URL%"
+    start "" "C:\Program Files\Microsoft\Edge\Application\msedge.exe" %FLAGS% --user-data-dir="%PROFILE_DIR%" "%URL%"
     goto next
 )
 if exist "C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe" (
-    start "" "C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe" %FLAGS% --user-data-dir="%TEMP%\BraveKioskProfile" "%URL%"
+    start "" "C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe" %FLAGS% --user-data-dir="%PROFILE_DIR%" "%URL%"
     goto next
 )
 
@@ -36,17 +40,21 @@ start "" "%URL%"
 
 :next
 echo Preparing companion script...
-powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://st-philopateer.github.io/Screens/front/companion.ps1' -OutFile '%TEMP%\companion.ps1'"
+set "LOCAL_COMPANION=%~dp0companion.ps1"
+set "CACHED_COMPANION=%PROFILE_DIR%\companion.ps1"
 
-if not exist "%TEMP%\companion.ps1" goto error
+:: If companion.ps1 exists locally next to this bat file, use it and update cache
+if exist "%LOCAL_COMPANION%" (
+    copy /y "%LOCAL_COMPANION%" "%CACHED_COMPANION%" >nul 2>&1
+) else (
+    :: Try downloading from GitHub in background, but do NOT block or fail if offline!
+    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Invoke-WebRequest -Uri 'https://st-philopateer.github.io/Screens/front/companion.ps1' -OutFile '%CACHED_COMPANION%' -TimeoutSec 3 } catch {}"
+)
 
-echo Set WshShell = CreateObject("WScript.Shell") > "%TEMP%\launch.vbs"
-echo WshShell.Run "powershell -ExecutionPolicy Bypass -File ""%TEMP%\companion.ps1""", 0, false >> "%TEMP%\launch.vbs"
-wscript "%TEMP%\launch.vbs"
-del "%TEMP%\launch.vbs"
-exit
-
-:error
-echo Error: Failed to download companion script from GitHub Pages.
-pause
+if exist "%CACHED_COMPANION%" (
+    echo Set WshShell = CreateObject("WScript.Shell") > "%TEMP%\launch.vbs"
+    echo WshShell.Run "powershell -ExecutionPolicy Bypass -File ""%CACHED_COMPANION%""", 0, false >> "%TEMP%\launch.vbs"
+    wscript "%TEMP%\launch.vbs"
+    del "%TEMP%\launch.vbs" >nul 2>&1
+)
 exit
