@@ -41,7 +41,7 @@
         --panel-bg-2: rgba(255, 255, 255, 0.025);
 
         /* Stage tokens — ALWAYS dark, never themed */
-        --stage-bg: radial-gradient(ellipse at center, #162035 0%, #070912 100%);
+        --stage-bg: #000;
         --stage-topbar-grad: linear-gradient(
           to bottom,
           rgba(0, 0, 0, 0.55) 0%,
@@ -126,7 +126,7 @@
         position: absolute;
         inset: 0;
         overflow: hidden;
-        background: radial-gradient(ellipse at center, #162035 0%, #070912 100%);
+        background: #000;
       }
       .slide-bg img.bg-image,
       .slide-bg video.bg-video {
@@ -757,7 +757,7 @@
         font-weight: 800;
         letter-spacing: 0.05em;
         background: linear-gradient(135deg, var(--accent), var(--accent2));
-        -webkit-background-clip-: text;
+        -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         line-height: 1.4;
       }
@@ -888,11 +888,6 @@
 
         <div id="progress-wrap"><div id="progress-bar"></div></div>
         <div id="slide-counter"></div>
-        <div id="stage-empty-fallback" style="display:none;position:absolute;inset:0;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at center, #182035 0%, #070912 100%);z-index:2;text-align:center;padding:40px;">
-          <img src="logo.png" style="width:160px;height:160px;object-fit:contain;margin-bottom:24px;filter:drop-shadow(0 8px 24px rgba(0,0,0,0.7));" alt="">
-          <h2 style="font-family:'Syne',sans-serif;font-size:clamp(26px,4vw,44px);font-weight:700;color:#fff;margin-bottom:12px;text-shadow:0 3px 12px rgba(0,0,0,0.8);">كنيسة الشهيد العظيم فيلوباتير مرقوريوس</h2>
-          <p style="font-size:clamp(15px,2vw,22px);color:rgba(255,255,255,0.8);max-width:700px;line-height:1.6;">خدمة شاشات العرض والإعلانات</p>
-        </div>
       </div>
 
       <div id="panel">
@@ -1268,11 +1263,6 @@
       function buildSlides(list) {
         const stage = document.getElementById("stage");
         if (!stage) return;
-
-        const emptyFallback = document.getElementById("stage-empty-fallback");
-        if (emptyFallback) {
-          emptyFallback.style.display = list.length === 0 ? "flex" : "none";
-        }
         if (!list.length) {
           document.querySelectorAll(".slide").forEach((s) => s.remove());
           return;
